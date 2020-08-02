@@ -1,25 +1,45 @@
+from __future__ import annotations
 import twint
 import tweepy
 from collections import Counter
 from Information import InfoBox
 from uuid import uuid4
 from datetime import datetime
+from typing import Dict, List
+import logging
+import json
 
 
-class TwitterNode(InfoBox):
-    def __init__(self, params={}):
+twitter_token_params = ['consumer_key', 'consumer_secret', 'access_token', 'access_token_secret']
+
+
+class TwitterApi(InfoBox):
+    def __init__(self, params: dict = None):
         super().__init__()
         self.count_all = Counter()
         self.tweepy_api = None
-        if False in [p in params for p in
-                             ['consumer_key', 'consumer_secret', 'access_token', 'access_token_secret']]:
-            pass
+        if not self.twitter_token_is_valid(params):
+            logging.debug("Tweepy not connected")
         else:
             self.tweepy_api = self.get_tweepy_api(consumer_key=params.get('consumer_key'),
                                                   consumer_secret=params.get('consumer_secret'),
                                                   access_token=params.get('access_token'),
                                                   access_token_secret=params.get('access_token_secret')
                                                   )
+            logging.debug("Tweepy connected")
+
+    @staticmethod
+    def twitter_token_is_valid(params):
+        if type(params) != dict:
+            return False
+        return False not in [i in params for i in twitter_token_params]
+
+    @staticmethod
+    def load_params(file_path):
+        file = InfoBox.load_json(file_path)
+        print(file)
+        assert TwitterApi.twitter_token_is_valid(file)
+        return file
 
     @staticmethod
     def get_tweepy_api(consumer_key, consumer_secret, access_token, access_token_secret):
@@ -71,23 +91,133 @@ class TwitterNode(InfoBox):
 
 
 class Network:
-    def __init__(self, base_accounts: list):
+    def __init__(self, name: str, base_accounts: list):
+        """
+        Contains metadata of all affiliation-scores connected to given base_accounts with timestamp
+        :param base_accounts:
+        """
         self.network_id = str(uuid4())
+        self.name = name
         self.base_accounts = base_accounts  # list of twitter ids (str) or User-Objects that are base of new network
 
 
+UndoQueue = Dict[datetime, List[callable]]  # Contains dates with all undo information to restore a past state
+
+
 class User:
-    def __init__(self, user_id: str, last_time_checked: datetime = None):
+    def __init__(self, user_id: str, undo_information: UndoQueue = None):
         self.user_id = user_id
+        self.likes = []
+        if undo_information is None:
+            self.undo_information = dict()
+        else:
+            self.undo_information = undo_information
 
-        self.last_time_checked = last_time_checked
+    def __dict__(self) -> dict:
+        raise NotImplementedError
 
-    def set_network_score(self, network_id: str, score: int):
-        assert type(score) == int
-        self.network_scores[network_id] = score
+    def update(self, user: User):
+        """
+        :param user:
+        :return:
 
-    def get_network_score(self, network_id: str):
-        return self.network_scores.get(network_id)
+        Updates all new information to raw-dict and stores diff as undo_information
+        ToDo: Implement recursive diff-searcher that returns UndoQueue
+        """
+        raise NotImplementedError
 
-    def is_in_network(self, network_id: str):
-        return type(self.network_scores.get(network_id)) == int
+    def calculate_affiliation(self, other_user: User) -> float:
+
+        """
+        :param other_user:
+        :return:
+
+        returns float between 0 and 1
+        where 1 means the accounts follow each other, are friends and
+        every tweet is a retweet or contains a mention of the other
+        """
+        raise NotImplementedError
+
+    @staticmethod
+    def from_dict(d: dict) -> User:   # import json status from Twitter directly
+        raise NotImplementedError
+
+    @staticmethod
+    def from_raw_data(d: dict) -> User:
+        raise NotImplementedError
+
+    @staticmethod
+    def undo(d: dict, undo_list: List[callable]) -> dict:
+        raise NotImplementedError
+
+    def make_restored_user(self, dt: datetime) -> User:
+        """
+        Returns the restored User from a given timestamp
+        :param dt:
+        :return:
+        """
+        if dt not in self.undo_information:
+            raise ValueError("Timestamp not in Undo-Queue")
+        else:
+            d = self.__dict__()
+            for timestamp, undo_list in self.undo_information:
+                if timestamp <= dt:
+                    d = User.undo(d, undo_list=undo_list)
+            return User.from_raw_data(d)
+
+
+UserDict = Dict[str, User]
+NetworkDict = Dict[str, Network]
+
+
+class TwitterDB(InfoBox):    # Holds all information
+    def __init__(self, users: UserDict = None, networks: NetworkDict = None, params: dict = None):
+        super().__init__()
+        self.users = users
+        self.networks = networks
+        self.twitter_api = TwitterApi(params=params)
+
+    def update_user(self, user: User):
+        if user.user_id in self.users:
+            self.users[user.user_id].update(user)
+        else:
+            self.users.update({user.user_id: user})
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+
+    parameters = TwitterApi.load_params(file_path='C:\\Users\\Nicolas Schilling\\Twitter\\params.json')
+    tw_db = TwitterDB(params=parameters)
+
+    try:
+        user = tw_db.twitter_api.get_user(screen_name="@AngelaMerkel")
+        TwitterApi.save_json({'user': user}, "user.json")
+
+    except:
+        pass
+
+    try:
+        favored = tw_db.twitter_api.get_favored_users(user['id_str'])
+        TwitterApi.save_json({'favored': user}, "favored.json")
+
+    except:
+        pass
+
+    try:
+        followings = tw_db.twitter_api.get_followings("@AngelaMerkel")
+        TwitterApi.save_json({'followings': user}, "followings.json")
+
+    except:
+        pass
+
+    try:
+
+        retweeted = tw_db.twitter_api.get_retweeted_users("@AngelaMerkel")
+        TwitterApi.save_json({'retweeted': user}, "retweeted.json")
+
+    except:
+        pass
+
+
+    print(user)

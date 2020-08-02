@@ -28,7 +28,6 @@ def spawn(gen, f):
     try:
         while True:
             n = next(seq)
-
             procs = list()
             n_cpus = psutil.cpu_count()
 
@@ -40,16 +39,15 @@ def spawn(gen, f):
                 procs.append(p)
             for p in procs:
                 p.join()
-                print(p.name, 'joined')
     except StopIteration:
         pass
+
 
 def run_child(affinity, f, it):
     proc = psutil.Process()
     proc.cpu_affinity(affinity)
     _aff = proc.cpu_affinity()
     return f(it)
-
 
 if __name__ == '__main__':
     spawn()

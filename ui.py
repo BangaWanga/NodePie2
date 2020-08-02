@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QApplication, QLineEdit, QLabel, QVBoxLayout, QPushButton, QMessageBox, QDialog, QGroupBox, QGridLayout
-from twitter import TwitterNode
+from twitter import TwitterApi
 
 
 class Twitter(QDialog):
@@ -36,7 +36,7 @@ class Twitter(QDialog):
             params = {
                 k: v.text() for k, v in self.param_edits.items()
             }
-            self.twitter_node = TwitterNode(params=params)
+            self.twitter_node = TwitterApi(params=params)
             if self.twitter_node.is_tweepy_connected():
                 self.login_tweepy_screen = QGroupBox("Tweepy Connection")
                 alert.setText("Tweepy is connected")
