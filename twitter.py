@@ -1,13 +1,17 @@
 from __future__ import annotations
+
+from abc import ABC
+
 import twint
 import tweepy
 from collections import Counter
 from Information import InfoBox
 from uuid import uuid4
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, Union
 import logging
-import json
+import os
+
 
 
 twitter_token_params = ['consumer_key', 'consumer_secret', 'access_token', 'access_token_secret']
@@ -37,7 +41,6 @@ class TwitterApi(InfoBox):
     @staticmethod
     def load_params(file_path):
         file = InfoBox.load_json(file_path)
-        print(file)
         assert TwitterApi.twitter_token_is_valid(file)
         return file
 
@@ -101,20 +104,28 @@ class Network:
         self.base_accounts = base_accounts  # list of twitter ids (str) or User-Objects that are base of new network
 
 
-UndoQueue = Dict[datetime, List[callable]]  # Contains dates with all undo information to restore a past state
-
-
-class User:
-    def __init__(self, user_id: str, undo_information: UndoQueue = None):
-        self.user_id = user_id
-        self.likes = []
-        if undo_information is None:
-            self.undo_information = dict()
-        else:
-            self.undo_information = undo_information
+class Tweet(InfoBox):
+    def __init__(self, raw: dict):
+        super().__init__()
+        self.raw = raw
 
     def __dict__(self) -> dict:
-        raise NotImplementedError
+        if self.raw is not None:
+            return super().__dict__().update({'raw': self.raw})
+        else:
+            return super().__dict__()
+
+
+class User(InfoBox):
+    def __init__(self, raw: dict = None):
+        super().__init__()
+        self.raw = raw
+
+    def __dict__(self) -> dict:
+        if self.raw is not None:
+            return super().__dict__().update({'raw': self.raw})
+        else:
+            return super().__dict__()
 
     def update(self, user: User):
         """
@@ -127,7 +138,6 @@ class User:
         raise NotImplementedError
 
     def calculate_affiliation(self, other_user: User) -> float:
-
         """
         :param other_user:
         :return:
@@ -140,17 +150,13 @@ class User:
 
     @staticmethod
     def from_dict(d: dict) -> User:   # import json status from Twitter directly
-        raise NotImplementedError
+        u = User(raw=d)
+        object_id = d.get(id)
+        assert object_id is not None
+        u.id = d.get(id)
+        return u
 
-    @staticmethod
-    def from_raw_data(d: dict) -> User:
-        raise NotImplementedError
-
-    @staticmethod
-    def undo(d: dict, undo_list: List[callable]) -> dict:
-        raise NotImplementedError
-
-    def make_restored_user(self, dt: datetime) -> User:
+    def make_restored_state(self, dt: datetime) -> InfoBox:
         """
         Returns the restored User from a given timestamp
         :param dt:
@@ -162,62 +168,85 @@ class User:
             d = self.__dict__()
             for timestamp, undo_list in self.undo_information:
                 if timestamp <= dt:
-                    d = User.undo(d, undo_list=undo_list)
+                    d = InfoBox.undo(d, undo_list=undo_list)
             return User.from_raw_data(d)
 
+    def get(self, value):
+        if self.raw is not None:
+            return self.raw.get(value)
 
 UserDict = Dict[str, User]
+TweetDict = Dict[str, Tweet]
 NetworkDict = Dict[str, Network]
 
 
 class TwitterDB(InfoBox):    # Holds all information
-    def __init__(self, users: UserDict = None, networks: NetworkDict = None, params: dict = None):
+    def __init__(self, users: UserDict = None, tweets: TweetDict = None, networks: NetworkDict = None, params: dict = None):
         super().__init__()
         self.users = users
+        self.tweets = tweets
         self.networks = networks
         self.twitter_api = TwitterApi(params=params)
 
     def update_user(self, user: User):
-        if user.user_id in self.users:
+        if user.get('user_id') in self.users:
             self.users[user.user_id].update(user)
         else:
             self.users.update({user.user_id: user})
 
+    @staticmethod
+    def from_files(file_paths: list) -> TwitterDB:
+        users = {}
+        tweets = {}
+
+        for path in file_paths:
+            file = TwitterDB.load_json(path)
+            if 'error' in file['user']:
+                user_name = path.split("\\")[-1][:-5]
+                users.update({user_name: User(raw=file['user'])})
+            else:
+                user_id = file['user']['id_str']
+                user_data = file['user']
+                favorites = file['favs']
+                network = file['network']
+                user_tweets = file['tweets']
+
+                user_data.update({'followings': file['followings']})
+                user_data.update({'favorites': favorites.keys()})
+                user_data.update({'network': network})
+
+                users.update({user_id: user_data})
+                tweets.update({key: Tweet(raw=val) for key, val in user_tweets.items()})
+                tweets.update({key: Tweet(raw=val) for key, val in favorites.items()})
+        return TwitterDB(users=users, tweets=tweets)
+
+    @staticmethod
+    def from_folder(folder_path) -> TwitterDB:
+        if os.path.exists(folder_path):
+            paths_list = [os.path.join(folder_path, f) for f in os.listdir(folder_path)]
+            return TwitterDB.from_files(paths_list)
+        else:
+            raise FileNotFoundError
+        """
+        Deprecated soon, for importing old format
+        :param file_path: 
+        :return: 
+        """
+        return TwitterDB()
+
+    def get_user(self, user_name) -> Union[User, None]:
+        for u in self.users.values():
+            if u.get('username') == user_name:
+                return u
+        return None
+
+
+
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-
     parameters = TwitterApi.load_params(file_path='C:\\Users\\Nicolas Schilling\\Twitter\\params.json')
-    tw_db = TwitterDB(params=parameters)
-
-    try:
-        user = tw_db.twitter_api.get_user(screen_name="@AngelaMerkel")
-        TwitterApi.save_json({'user': user}, "user.json")
-
-    except:
-        pass
-
-    try:
-        favored = tw_db.twitter_api.get_favored_users(user['id_str'])
-        TwitterApi.save_json({'favored': user}, "favored.json")
-
-    except:
-        pass
-
-    try:
-        followings = tw_db.twitter_api.get_followings("@AngelaMerkel")
-        TwitterApi.save_json({'followings': user}, "followings.json")
-
-    except:
-        pass
-
-    try:
-
-        retweeted = tw_db.twitter_api.get_retweeted_users("@AngelaMerkel")
-        TwitterApi.save_json({'retweeted': user}, "retweeted.json")
-
-    except:
-        pass
-
-
-    print(user)
+    tw_db = TwitterDB.from_folder("C:\\Users\\Nicolas Schilling\\Documents\\DATA_IBD_final\\Data")
+    u = tw_db.get_user("ibdeutschland")
+    print(u.raw.keys())
